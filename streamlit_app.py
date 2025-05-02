@@ -1,5 +1,3 @@
-# streamlit_app.py
-
 import streamlit as st
 import pandas as pd
 import io
@@ -8,13 +6,11 @@ from openpyxl.styles import PatternFill
 
 st.title("🧾 EHR vs Card Reconciliation Tool")
 
-# Upload files
 ehr_file = st.file_uploader("Upload EHR CSV file", type=['csv'])
 card_file = st.file_uploader("Upload Card Excel file", type=['xlsx'])
 
 if ehr_file and card_file:
     if st.button("🔍 Run Reconciliation"):
-        # Load Data
         ehr_df = pd.read_csv(ehr_file)
         card_df = pd.read_excel(card_file)
 
@@ -39,26 +35,32 @@ if ehr_file and card_file:
         ehr_grouped = ehr_grouped.rename(columns={'FormattedDate': 'Date', 'Last4': 'Card Last 4'})
 
         ehr_missing_grouped = ehr_missing_card.copy()
+        ehr_missing_grouped = ehr_missing_grouped.rename(columns={
+            'FormattedDate': 'Date',
+            'Last4': 'Card Last 4',
+            'Ref #': 'Ref #',
+            'Payer Type': 'Payer'
+        })
         ehr_missing_grouped['EHR Trxs'] = ehr_missing_grouped[['Amount']].values.tolist()
         ehr_missing_grouped['EHR Tot Amt'] = ehr_missing_grouped['Amount']
-        ehr_missing_grouped = ehr_missing_grouped.rename(columns={
-            'FormattedDate': 'Date', 'Last4': 'Card Last 4',
-            'Ref #': 'Ref #', 'Payer Type': 'Payer'
-        })
-        ehr_combined = pd.concat([ehr_grouped, ehr_missing_grouped[['Date', 'Card Last 4', 'Ref #', 'Payer', 'EHR Trxs', 'EHR Tot Amt']]])
 
-        card_grouped = card_df.groupby(['FormattedDate', 'Last4']).agg({
-            'Tran Amt': list
-        }).rename(columns={'Tran Amt': 'Card Trxs'}).reset_index()
-        card_grouped['Card Tot Amt'] = card_grouped['Card Trxs'].apply(sum)
-        card_grouped = card_grouped.rename(columns={'FormattedDate': 'Date', 'Last4': 'Card Last 4'})
+        # 🔧 Fix duplicate column names
+        ehr_missing_grouped = ehr_missing_grouped.loc[:, ~ehr_missing_grouped.columns.duplicated()]
+
+        ehr_missing_grouped = ehr_missing_grouped[['Date', 'Card Last 4', 'Ref #', 'Payer', 'EHR Trxs', 'EHR Tot Amt']]
+        ehr_combined = pd.concat([ehr_grouped, ehr_missing_grouped], ignore_index=True)
+
+        card_grouped = card_df.groupby(['FormattedDate', 'Last4']).agg({'Tran Amt': list}).reset_index()
+        card_grouped['Card Tot Amt'] = card_grouped['Tran Amt'].apply(sum)
+        card_grouped = card_grouped.rename(columns={'FormattedDate': 'Date', 'Last4': 'Card Last 4', 'Tran Amt': 'Card Trxs'})
 
         merged_df = pd.merge(ehr_combined, card_grouped, how='outer', on=['Date', 'Card Last 4'])
         merged_df['EHR Tot Amt'] = merged_df['EHR Tot Amt'].fillna(0)
         merged_df['Card Tot Amt'] = merged_df['Card Tot Amt'].fillna(0)
 
         merged_df['Trx Match Status'] = merged_df.apply(
-            lambda row: 'MATCH' if abs(row['EHR Tot Amt'] - row['Card Tot Amt']) < 0.01 else 'NON MATCH', axis=1
+            lambda row: 'MATCH' if abs(row['EHR Tot Amt'] - row['Card Tot Amt']) < 0.01 else 'NON MATCH',
+            axis=1
         )
 
         final_df = merged_df.sort_values(by='Date').reset_index(drop=True)
@@ -88,6 +90,7 @@ if ehr_file and card_file:
         )
 
         card_lookup = card_df[['FormattedDate', 'Tran Amt']].dropna()
+
         def check_possible_match(row):
             if row['Trx Match Status'] != 'NON MATCH':
                 return ''
